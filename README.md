@@ -73,3 +73,84 @@ so they use TCP for reliable delivery.
 - **matches:** match_id, started_at, ended_at, player_a, player_b, score_a,
   score_b, winner, longest_rally
 - **points:** point_id, match_id, scored_at, scorer (A/B), rally_length
+
+## Non-Functional Requirements
+
+### 1. Version Control
+- All code, config files, the Dockerfile, the compose file, and startup scripts live in this repo.
+- `main` always holds working code. Features are built on branches (e.g. `feature/hud`)
+  and merged through pull requests after testing.
+- Both partners commit their own work from their own GitHub accounts.
+- **Every session:** `git pull` on each Pi at the start, and commit + `git push` from
+  every Pi used at the end. No code is ever left only on a Pi.
+- The NAS database login is kept in a `.env` file (listed in `.gitignore`), never on GitHub.
+
+### 2. Ports
+All project sockets use unprivileged ports (1025–65535). No privileged ports are used,
+so all services run as a normal user, not root.
+
+| Port | Transport | Host | Purpose |
+|---|---|---|---|
+| 9001 | UDP | HMI Pi A | Player A joystick input |
+| 9002 | UDP | HMI Pi A | Player B joystick input |
+| 9101 | UDP | HMI Pi A (localhost) & HMI Pi B | Game state to HUD |
+| 8000 | TCP | HMI Pi A | Lobby/control |
+| 9300 | TCP | HMI Pi A | LED events |
+| 3306 | TCP | Classroom NAS | MySQL database |
+
+### 3. Network Interfaces
+- All project traffic uses **eth0**. Servers bind to their Pi's eth0 IP; the HUD on
+  HMI Pi A binds to `127.0.0.1`.
+- **wlan0 is not used.**
+- No IP addresses, default routes, or interface settings are changed, so SSH access
+  stays available on all four Pis.
+
+### 4. Subnet Boundary
+All traffic stays inside the classroom LAN **`192.168.5.0/24`**. Services only connect
+to the fixed addresses below; the project does no scanning, discovery, or broadcasts.
+
+| Node | IP |
+|---|---|
+| HMI Pi A (Table 5) | 192.168.5.52 |
+| Sense HAT Pi A (Table 5) | 192.168.5.53 |
+| HMI Pi B (Table 4) | 192.168.5.42 |
+| Sense HAT Pi B (Table 4) | 192.168.5.43 |
+| Classroom NAS | TBD |
+
+### 5. CLI Verification (Expo Demo)
+
+**Sockets and PIDs:**
+```bash
+# HMI Pi A
+sudo ss -tunap | grep -E ':(8000|9001|9002|9101|9300|3306)\b'
+# HMI Pi B and Sense HAT Pis
+sudo ss -tunap | grep -E ':(8000|9001|9002|9101|9300)\b'
+```
+
+**Port ownership:**
+```bash
+sudo lsof -nP -i :8000 -i :9001 -i :9002 -i :9101 -i :9300 -i :3306
+```
+
+**Link and route health:**
+```bash
+ip -br addr show eth0     # eth0 is UP with the expected IP
+ip route                  # default route unchanged, via eth0
+ip -s link show eth0      # no errors or drops
+ethtool eth0              # link detected, 1000 Mb/s, full duplex
+ping -c 5 192.168.5.42    # HMI Pi B (repeat for .53, .43, and the NAS)
+```
+
+### 6. Startup (< 3 minutes from cold reboot)
+
+| Node | Component | Starts via |
+|---|---|---|
+| HMI Pi A | Game engine | Docker Compose (`restart: unless-stopped`) |
+| HMI Pi A & B | `hud.py` | systemd user service, after the desktop loads |
+| Sense HAT Pi A & B | `controller.py` | systemd service, after the network is up |
+
+- **Target:** ready to play in about **90 seconds** with no manual commands.
+- Every program retries its connections until the others are up, so the Pis can
+  in any order.
+- First-time setup (install Docker, build the image, enable services) is done w
+  setup script.
