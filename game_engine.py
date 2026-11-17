@@ -26,24 +26,46 @@ sock.setblocking(False)
 
 phase = "playing"
 ball_x, ball_y = 400.0, 240.0
-angle = math.radians(random.randint(-30,30)) # Serve angle
-ball_vx, ball_vy = BALL_SPEED * math.cos(angle), BALL_SPEED * math.sin(angle)
 paddle_a, paddle_b = 240, 240 # Paddle y values
 score_a, score_b = 0, 0
 rally = 0 # Rally length
 seq = 0
 
+def new_serve(toward):
+    '''Moves ball to the center of the screen and serves in the given direction.
+    On start, the direction is random.'''
+    global ball_vx, ball_vy, ball_x, ball_y
+    ball_x, ball_y = 400.0, 240.0
+    angle = math.radians(random.randint(-30,30))
+    if toward == "A":
+        ball_vx, ball_vy = BALL_SPEED * -math.cos(angle), BALL_SPEED * math.sin(angle)
+    elif toward == "B":
+        ball_vx, ball_vy = BALL_SPEED * math.cos(angle), BALL_SPEED * math.sin(angle)
+
+new_serve(random.choice(["A", "B"]))
+
 next_tick = time.monotonic()
 try:
     while True:
         if phase == "serve":
-            start = time.monotonic()
-            time.sleep(SERVE_DELAY_S)
-            phase = "playing"
+            if time.monotonic() - serve_start >= SERVE_DELAY_S:
+                phase = "playing"
         elif phase == "playing":
+            '''Currently, if the paddle intersects the ball before it hits
+            the wall, the ball will snap to in front of the paddle. Test how this
+            feels to see if this should be intended behavior or not.'''
+            
             ball_x += ball_vx
             ball_y += ball_vy
 
+            if ball_x - BALL_SIZE / 2 <= (PADDLE_X + PADDLE_W / 2) and abs(ball_y - paddle_a) <= BALL_SIZE / 2 + PADDLE_H / 2 and ball_vx < 0:
+                ball_vx = -ball_vx
+                ball_x = BALL_SIZE / 2 + (PADDLE_X + PADDLE_W / 2)
+                rally += 1
+            if ball_x + BALL_SIZE / 2 >= (FIELD_W - PADDLE_X - PADDLE_W / 2) and abs(ball_y - paddle_b) <= BALL_SIZE / 2 + PADDLE_H / 2 and ball_vx > 0:
+                ball_vx = -ball_vx
+                ball_x = FIELD_W - PADDLE_X - PADDLE_W / 2 - BALL_SIZE / 2
+                rally += 1
             if ball_y <= BALL_SIZE / 2:
                 ball_vy = abs(ball_vy)
                 ball_y = BALL_SIZE / 2
@@ -51,19 +73,23 @@ try:
                 ball_vy = -abs(ball_vy)
                 ball_y = FIELD_H - BALL_SIZE / 2
             if ball_x <= BALL_SIZE / 2:
-                ball_x, ball_y = 400.0, 240.0 
-                ball_vx, ball_vy = -BALL_SPEED * math.cos(angle), BALL_SPEED * math.sin(angle)
                 score_b += 1
                 rally = 0
                 if score_b == WIN_SCORE:
                     phase = "over"
+                else:
+                    phase = "serve"
+                    serve_start = time.monotonic()
+                    new_serve("A")
             if ball_x >= FIELD_W - BALL_SIZE / 2:
-                ball_x, ball_y = 400.0, 240.0
-                ball_vx, ball_vy = BALL_SPEED * math.cos(angle), BALL_SPEED * math.sin(angle)
                 score_a += 1
                 rally = 0
                 if score_a == WIN_SCORE:
                     phase = "over"
+                else:
+                    phase = "serve"
+                    serve_start = time.monotonic()
+                    new_serve("B")
 
         state = {
             "t": "state",
