@@ -3,7 +3,10 @@ import os
 import socket
 import time
 
+from dotenv import load_dotenv
 from sense_hat import SenseHat
+
+load_dotenv()  # read the repo's .env; values already set (e.g. by docker env_file) win
 
 PLAYER = os.environ.get("PLAYER", "A")
 ENGINE_IP = os.environ.get("ENGINE_IP", "192.168.5.52")
