@@ -86,7 +86,11 @@ The engine works in a fixed logical field, independent of any screen size:
 ## 3. Sockets 3 & 4 — Game State (UDP)
 
 **Direction:** Engine → HUD
-**Ports:** Player A HUD → `127.0.0.1:9101`, Player B HUD → `192.168.5.42:9101`
+**Ports:** Player A HUD → `hud:9101`, Player B HUD → `192.168.5.42:9101`
+
+- The engine and HUD A both run on HMI Pi A in separate containers, so the engine reaches
+  HUD A by its Docker Compose service name (`hud`), not `127.0.0.1` (each container has its own loopback).
+- Both HUDs bind `0.0.0.0:9101` inside their container; Compose publishes it with `"9101:9101/udp"`.
 
 ### `state`
 
@@ -140,7 +144,7 @@ The engine works in a fixed logical field, independent of any screen size:
 ## 4. Sockets 5 & 6 — Lobby / Control (TCP)
 
 **Direction:** Both ways. HUD connects to engine at `192.168.5.52:8000`
-(Player A's HUD connects to `127.0.0.1:8000`).
+(Player A's HUD, on the same Pi, connects to `engine:8000` by Compose service name).
 **Framing:** newline-delimited JSON.
 
 ### Connection handshake

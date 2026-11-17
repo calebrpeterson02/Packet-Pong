@@ -9,7 +9,7 @@ This project is intended for recreational purpose, expanding on the traditional 
   * HMI PI (B): Runs game state for player B
 ### Sense HAT Pi Role (Sensors/actuators polled, daemons hosted): 
   * Sense HAT Pi (A): Player A paddle input
-  * Senes HAT Pi (B): Player B paddle input
+  * Sense HAT Pi (B): Player B paddle input
 ### Remote Storage / Infrastructure Role (NAS Database, MQTT Broker, or SFTP/SCP Server): 
   * High score stored in NAS Database
 ### Out-of-Scope Boundaries (List 1–2 features your team is intentionally excluding to ensure completion by Week 15): 
@@ -17,15 +17,16 @@ This project is intended for recreational purpose, expanding on the traditional 
 ## System Overview
 
 Packet Pong is a two-player networked Pong game. Each player has an HMI Pi
-(touchscreen) and a Sense HAT Pi (joystick + LED matrix). The game engine runs in
-Docker on HMI Pi A and controls the ball, paddles, and score.
+(touchscreen) and a Sense HAT Pi (joystick + LED matrix). The game engine runs on
+HMI Pi A and controls the ball, paddles, and score. Every service runs in its own
+Docker container, started from the shared `docker-compose.yml`.
 
-| Node | Table | Software | Role |
+| Node | Table | Software (container) | Role |
 |---|---|---|---|
-| HMI Pi A | 5 | `game_engine.py` (Docker), `hud.py` | Game engine + Player A's screen |
-| HMI Pi B | 4 | `hud.py` | Player B's screen |
-| Sense HAT Pi A | 5 | `controller.py` | Player A's joystick + LED matrix |
-| Sense HAT Pi B | 4 | `controller.py` | Player B's joystick + LED matrix |
+| HMI Pi A | 5 | `engine/game_engine.py` (`engine`), `hud/hud.py` (`hud`) | Game engine + Player A's screen |
+| HMI Pi B | 4 | `hud/hud.py` (`hud`) | Player B's screen |
+| Sense HAT Pi A | 5 | `controller/controller.py` (`controller`) | Player A's joystick + LED matrix |
+| Sense HAT Pi B | 4 | `controller/controller.py` (`controller`) | Player B's joystick + LED matrix |
 | Classroom NAS | — | MySQL (`packet_pong`) | Stores match and point records |
 
 ## Socket Allocation
@@ -34,18 +35,22 @@ Docker on HMI Pi A and controls the ball, paddles, and score.
 |---|---|---|---|---|
 | 1 | UDP | HMI Pi A : 9001 | Sense HAT Pi A | Player A joystick input (30 Hz) |
 | 2 | UDP | HMI Pi A : 9002 | Sense HAT Pi B | Player B joystick input (30 Hz) |
-| 3 | UDP | HMI Pi A HUD : 127.0.0.1:9101 | Game engine | Game state to Player A's screen (30 Hz) |
+| 3 | UDP | HMI Pi A HUD : `hud:9101` | Game engine | Game state to Player A's screen (30 Hz) |
 | 4 | UDP | HMI Pi B HUD : 9101 | Game engine | Game state to Player B's screen (30 Hz) |
-| 5 | TCP | Game engine : 8000 | HMI Pi A HUD | Lobby/control (Ready, Pause, Rematch) |
+| 5 | TCP | Game engine : `engine:8000` | HMI Pi A HUD | Lobby/control (Ready, Pause, Rematch) |
 | 6 | TCP | Game engine : 8000 | HMI Pi B HUD | Lobby/control (Ready, Pause, Rematch) |
 | 7 | TCP | NAS : 3306 | Game engine | Match and point logging to MySQL |
 | 8 | TCP | Game engine : 9300 | Sense HAT Pi A & B | LED events (goal, win, lose, paused) |
 
-No WebSockets are used. All custom ports are in the unprivileged range (1025–65
+On HMI Pi A the engine and HUD are separate containers, so they reach each other by
+Compose service name (`hud`, `engine`) instead of `127.0.0.1`. Every other connection
+crosses the LAN to the Pi's IP, where Docker forwards it to the published port.
 
-**Why UDP vs. TCP:** Sockets 1–4 send small, constant updates where speed matte
+No WebSockets are used. All custom ports are in the unprivileged range (1025–65535).
+
+**Why UDP vs. TCP:** Sockets 1–4 send small, constant updates where speed matters
 and a lost packet is replaced by the next one 33 ms later, so they use UDP.
-Sockets 5–8 carry messages that must arrive (commands, saved scores, LED events
+Sockets 5–8 carry messages that must arrive (commands, saved scores, LED events),
 so they use TCP for reliable delivery.
 
 ## Functional Requirements
@@ -61,12 +66,16 @@ so they use TCP for reliable delivery.
    each player's side, with Ready/Pause/Rematch buttons and a network panel
    (packets/sec, packet loss %, connection status) updated every second.
 5. **Remote logging:** The engine writes to the `packet_pong` MySQL database on
-   the classroom NAS. A `matches` row is created per game and a `points` row pe
+   the classroom NAS. A `matches` row is created per game and a `points` row per
    point. Both screens show a top-10 longest-rally board. The game keeps running
    if the database is unreachable.
-6. **Docker:** The engine runs in the `packet-pong-engine` container on HMI Pi A,
-   built from a Dockerfile, started with `docker compose up -d`, using host
-   networking, and restarting automatically after a crash or reboot.
+6. **Docker:** Each service (`engine`, `hud`, `controller`) is built from its own
+   Dockerfile and defined in one `docker-compose.yml`. Compose profiles pick which
+   services a Pi starts (`engine` + `hmi` on HMI Pi A, `hmi` on HMI Pi B, `sensehat`
+   on the Sense HAT Pis). Containers use Docker's default network with published
+   ports (no host networking) and restart automatically after a crash or reboot.
+   `PLAYER` (A/B) is set in the shell when starting Compose, e.g.
+   `PLAYER=B docker compose --profile hmi up -d --build`.
 
 ## Database Schema
 
@@ -93,14 +102,15 @@ so all services run as a normal user, not root.
 |---|---|---|---|
 | 9001 | UDP | HMI Pi A | Player A joystick input |
 | 9002 | UDP | HMI Pi A | Player B joystick input |
-| 9101 | UDP | HMI Pi A (localhost) & HMI Pi B | Game state to HUD |
+| 9101 | UDP | HMI Pi A & HMI Pi B | Game state to HUD |
 | 8000 | TCP | HMI Pi A | Lobby/control |
 | 9300 | TCP | HMI Pi A | LED events |
 | 3306 | TCP | Classroom NAS | MySQL database |
 
 ### 3. Network Interfaces
-- All project traffic uses **eth0**. Servers bind to their Pi's eth0 IP; the HUD on
-  HMI Pi A binds to `127.0.0.1`.
+- All project traffic uses **eth0**. Inside their containers, servers and HUDs bind
+  `0.0.0.0` (a container can't bind the Pi's own IP); Docker publishes each port on
+  the Pi, so traffic still arrives on the Pi's eth0 IP.
 - **wlan0 is not used.**
 - No IP addresses, default routes, or interface settings are changed, so SSH access
   stays available on all four Pis.

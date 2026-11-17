@@ -1,5 +1,13 @@
+import json
+import os
+import socket
+import sys
+import time
+
 import pygame
-import socket, json, time, sys
+from dotenv import load_dotenv
+
+load_dotenv()  # read the repo's .env; values already set (e.g. by docker env_file) win
 
 pygame.init()
 window = pygame.display.set_mode((800, 480), pygame.FULLSCREEN)
@@ -8,19 +16,19 @@ pygame.display.set_caption("Packet Pong")
 clock = pygame.time.Clock()
 
 ### Put code you want to run once before the game starts below this!
-player = sys.argv[1].upper()
+player = os.environ.get("PLAYER", "A").upper()
 if player == "A":
-    bind_ip = "127.0.0.1"
+    bind_ip = "0.0.0.0"  # engine runs on this same Pi
     bind_port = 9101
 elif player == "B":
-    bind_ip = "127.0.0.1"  # "192.168.5.42"
-    bind_port = 9102 # 9101
+    bind_ip = "0.0.0.0"
+    bind_port = 9101
 else:
-    print("Invalid player argument. Use 'A' or 'B'.")
+    print("Invalid PLAYER. Use 'A' or 'B'.")
     sys.exit(1)
 
-udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)   # IPv4 + UDP
-udp_sock.bind((bind_ip, bind_port))                            # note: one tuple argument
+udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # IPv4 + UDP
+udp_sock.bind((bind_ip, bind_port))  # note: one tuple argument
 udp_sock.setblocking(False)
 
 latest_state = None
@@ -46,24 +54,23 @@ while should_run:
         try:
             data, addr = udp_sock.recvfrom(2048)  # buffer size is 2048 bytes
         except BlockingIOError:
-            break   # no more data to read
+            break  # no more data to read
 
         try:
             msg = json.loads(data)
         except ValueError:
-            continue    # garbled packet, skip it
+            continue  # garbled packet, skip it
 
         if not isinstance(msg, dict) or msg.get("t") != "state":
-            continue    # not a state message
+            continue  # not a state message
 
         seq = msg.get("seq", -1)
         if seq <= last_seq and last_seq - seq <= 1000:
-            continue    # old or duplicate packet (a drop > 1000 means the engine restarted)
+            continue  # old or duplicate packet (a drop > 1000 means the engine restarted)
 
         latest_state = msg
         last_seq = seq
         last_state_time = time.monotonic()
-
 
     # Logic goes above, draw goes below
     window.fill("black")
@@ -73,7 +80,7 @@ while should_run:
         textpos = text.get_rect(centerx=window.get_width() / 2, y=10)
         window.blit(text, textpos)
     else:
-        pygame.draw.line(window, "white", (400,0), (400,480))
+        pygame.draw.line(window, "white", (400, 0), (400, 480))
 
         # Paddles
         paddle_a = pygame.Rect(0, 0, 10, 80)

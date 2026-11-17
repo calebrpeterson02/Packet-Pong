@@ -2,14 +2,17 @@ import os
 from datetime import datetime
 
 import mysql.connector
+from dotenv import load_dotenv
 
-# NAS MariaDB Connection Configuration
+load_dotenv()  # read the repo's .env; values already set (e.g. by docker env_file) win
+
+# NAS MariaDB Connection Configuration (all values come from .env, which is not on GitHub)
 DB_CONFIG = {
-    "host": "192.168.5.254",
-    "port": 3306,
-    "database": "Sandbox5",
-    "user": "Sandbox5",
-    "password": os.environ.get("DB_PASS", ""),  # kept in .env, not on GitHub
+    "host": os.environ.get("DB_HOST", "192.168.5.254"),
+    "port": int(os.environ.get("DB_PORT", "3306")),
+    "database": os.environ.get("DB_NAME", "Sandbox5"),
+    "user": os.environ.get("DB_USER", "Sandbox5"),
+    "password": os.environ.get("DB_PASS", ""),
     "connection_timeout": 3,  # don't hang if the NAS is down
 }
 
