@@ -14,15 +14,18 @@ window = pygame.display.set_mode((800, 480), pygame.FULLSCREEN)
 pygame.display.set_caption("Packet Pong")
 
 clock = pygame.time.Clock()
+FIELD_W = 1600
 
 ### Put code you want to run once before the game starts below this!
 player = os.environ.get("PLAYER", "A").upper()
 if player == "A":
     bind_ip = "0.0.0.0"  # engine runs on this same Pi
     bind_port = 9101
+    view_offset = 0
 elif player == "B":
     bind_ip = "0.0.0.0"
-    bind_port = 9101
+    bind_port = 9102
+    view_offset = FIELD_W / 2
 else:
     print("Invalid PLAYER. Use 'A' or 'B'.")
     sys.exit(1)
@@ -80,19 +83,20 @@ while should_run:
         textpos = text.get_rect(centerx=window.get_width() / 2, y=10)
         window.blit(text, textpos)
     else:
-        pygame.draw.line(window, "white", (400, 0), (400, 480))
-
         # Paddles
         paddle_a = pygame.Rect(0, 0, 10, 80)
-        paddle_a.center = (20, latest_state["pa"])
+        paddle_a.center = (20 - view_offset, latest_state["pa"])
         paddle_b = pygame.Rect(0, 0, 10, 80)
-        paddle_b.center = (780, latest_state["pb"])
+        paddle_b.center = (FIELD_W - 20 - view_offset, latest_state["pb"])
 
         pygame.draw.rect(window, "white", paddle_a)
         pygame.draw.rect(window, "white", paddle_b)
 
         # Ball
-        pygame.draw.circle(window, "white", center=latest_state["ball"], radius=5)
+        ball_x, ball_y = latest_state["ball"]
+        pygame.draw.circle(
+            window, "white", center=(ball_x - view_offset, ball_y), radius=5
+        )
 
         # Scores
         player_a_score = font.render(str(latest_state["sa"]), True, "white")
