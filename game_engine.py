@@ -47,6 +47,13 @@ tcp_sock.bind((ENGINE_IP, 8000))
 tcp_sock.listen()
 tcp_sock.setblocking(False)
 
+# LED Socket
+led_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+led_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+led_sock.bind((ENGINE_IP, 9300))
+led_sock.listen()
+led_sock.setblocking(False)
+
 # Socket variables
 conns = []
 ready = {"A": False, "B": False}
@@ -85,9 +92,10 @@ def drop(c):
         pass    # already closed or broken
     if c in conns:
         conns.remove(c)
-        if c["player"] is not None and phase in ("serve", "playing"):
+        if c["player"] is not None and phase in ("serve", "playing") and c["kind"] == "hud":
             phase = "paused"
-        elif c["player"] is not None and phase == "lobby":
+            led_all("paused")
+        elif c["player"] is not None and phase == "lobby" and c["kind"] == "hud":
             ready[c["player"]] = False
             broadcast({"t": "lobby", "ready": ready})
     print("dropped", c["player"])
@@ -103,22 +111,31 @@ def send_line(c, msg):
 def broadcast(msg):
     '''Loops over conns and calls send_line() for every connection'''
     for c in conns:
-        if c["player"] is not None:
+        if c["player"] is not None and c["kind"] == "hud":
             send_line(c, msg)
 
-#new_serve(random.choice(["A", "B"]))
+def led(p, ev):
+    for c in conns:
+        if c["kind"] == "led" and c["player"] == p:
+            send_line(c, {"t": "led", "ev": ev})
+
+def led_all(ev):
+    for p in ("A", "B"):
+        led(p, ev)
+
 next_tick = time.monotonic()
 
 try:
     while True:
-        while True:
-            try:
-                new_sock, addr = tcp_sock.accept()
-                new_sock.setblocking(False)
-                conns.append({"sock": new_sock, "buf": b"", "player": None})
-                print(addr)
-            except BlockingIOError:
-                break
+        for lsock, kind in ((tcp_sock, "hud"), (led_sock, "led")):
+            while True:
+                try:
+                    new_sock, addr = lsock.accept()
+                    new_sock.setblocking(False)
+                    conns.append({"sock": new_sock, "buf": b"", "player": None, "kind": kind})
+                    print(addr)
+                except BlockingIOError:
+                    break
 
         for c in conns[:]:
             try:
@@ -163,7 +180,7 @@ try:
                             drop(c)
                             break
 
-                        elif any(other["player"] == p for other in conns):
+                        elif any(other["player"] == p and other["kind"] == c["kind"] for other in conns):
                             send_line(c, {"t": "error", "msg": f"player {p} already connected."})
                             drop(c)
                             break
@@ -171,11 +188,23 @@ try:
                         else:
                             c["player"] = p
                             send_line(c, {"t": "welcome", "p": p})
-                            send_line(c, {"t": "lobby", "ready": ready})
-                            send_line(c, {"t": "board", "rows":[]})
-                            print(f"HUD {p} joined")
+                            if c["kind"] == "hud":
+                                send_line(c, {"t": "lobby", "ready": ready})
+                                send_line(c, {"t": "board", "rows":[]})
+                            elif c["kind"] == "led":
+                                if phase == "paused":
+                                    ev = "paused"
+                                elif phase == "over":
+                                    if (p == "A" and score_a > score_b) or (p == "B" and score_b > score_a):
+                                        ev = "win"
+                                    else:
+                                        ev = "lose"
+                                else:
+                                    ev = "clear"
+                                send_line(c, {"t": "led", "ev": ev})
+                            print(f"{c['kind']} {p} joined")
                         
-                    else:
+                    elif c["kind"] == "hud":
                         t = msg.get("t")
                         p = c["player"]
                         if t == "ready":
@@ -188,16 +217,19 @@ try:
                                     new_serve(random.choice(["A", "B"]))
                                     serve_start = time.monotonic()
                                     phase = "serve"
+                                    led_all("clear")
                             else:
                                 send_line(c, {"t": "error", "msg": f"cannot {t} in {phase}"})
                         elif t == "pause":
                             if phase in ("serve", "playing"):
                                 phase = "paused"
+                                led_all("paused")
                             else:
                                 send_line(c, {"t": "error", "msg": f"cannot {t} in {phase}"})
                         elif t == "resume":
                             if phase == "paused":
                                 phase = "serve"
+                                led_all("clear")
                                 serve_start = time.monotonic()
                             else:
                                 send_line(c, {"t": "error", "msg": f"cannot {t} in {phase}"})
@@ -211,9 +243,10 @@ try:
                                     ball_x, ball_y = FIELD_W/2, FIELD_H/2
                                     paddle_y = {"A": FIELD_H/2, "B": FIELD_H/2}
                                     phase = "lobby"
+                                    led_all("clear")
                                     broadcast({"t": "lobby", "ready": ready})
                             else:
-                                send_line(c, {"t": "error", "msg": "game is still in progress!"})
+                                send_line(c, {"t": "error", "msg": f"cannot {t} in {phase}"})
                         else:
                             send_line(c, {"t": "error", "msg": f"unknown command {t}"})
 
@@ -292,9 +325,13 @@ try:
             if ball_x <= BALL_SIZE / 2:
                 score_b += 1
                 rally = 0
+                led("B", "goal_for")
+                led("A", "goal_against")
                 if score_b == WIN_SCORE:
                     phase = "over"
                     ball_x, ball_y = FIELD_W/2, FIELD_H/2
+                    led("B", "win")
+                    led("A", "lose")
                 else:
                     phase = "serve"
                     serve_start = time.monotonic()
@@ -302,9 +339,13 @@ try:
             if ball_x >= FIELD_W - BALL_SIZE / 2:
                 score_a += 1
                 rally = 0
+                led("A", "goal_for")
+                led("B", "goal_against")
                 if score_a == WIN_SCORE:
                     phase = "over"
                     ball_x, ball_y = FIELD_W/2, FIELD_H/2
+                    led("A", "win")
+                    led("B", "lose")
                 else:
                     phase = "serve"
                     serve_start = time.monotonic()
