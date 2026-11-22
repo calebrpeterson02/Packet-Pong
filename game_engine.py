@@ -78,12 +78,18 @@ def new_serve(toward):
 
 def drop(c):
     '''Closes a HUD connection and removes it from conns.'''
+    global phase
     try:
         c["sock"].close()
     except OSError:
         pass    # already closed or broken
     if c in conns:
         conns.remove(c)
+        if c["player"] is not None and phase in ("serve", "playing"):
+            phase = "paused"
+        elif c["player"] is not None and phase == "lobby":
+            ready[c["player"]] = False
+            broadcast({"t": "lobby", "ready": ready})
     print("dropped", c["player"])
 
 def send_line(c, msg):
