@@ -147,7 +147,7 @@ try:
                             drop(c)
                             break
                         
-                        elif msg.get("v") != 1:
+                        elif msg.get("v") != PROTOCOL_VERSION:
                             send_line(c, {"t": "error", "msg": "unsupported protocol version"})
                             drop(c)
                             break
@@ -172,28 +172,42 @@ try:
                     else:
                         t = msg.get("t")
                         p = c["player"]
-                        if ready[p] == True:
-                            broadcast({"t": "lobby", "ready": ready})
-                            if all(ready.values()):
-                                score_a, score_b, rally = 0, 0, 0
-                                paddle_y = {"A": FIELD_H/2, "B": FIELD_H/2}
-                                new_serve(random.choice(["A", "B"]))
-                                serve_start = time.monotonic()
-                                phase = "serve"
-                        elif t == "pause" and phase in ("serve", "playing"):
-                            phase = "paused"
-                        elif phase == "paused" and t == "resume":
-                            phase = "serve"
-                            serve_start = time.monotonic()
-                        elif rematch[p] == True:
-                            if all(rematch.values()):
-                                score_a, score_b, rally = 0, 0, 0
-                                ready = {"A": False, "B": False}
-                                rematch = {"A": False, "B": False}
-                                ball_x, ball_y = FIELD_W/2, FIELD_H/2
-                                paddle_y = {"A": FIELD_H/2, "B": FIELD_H/2}
-                                phase = "lobby"
+                        if t == "ready":
+                            if phase == "lobby":
+                                ready[p] = True
                                 broadcast({"t": "lobby", "ready": ready})
+                                if all(ready.values()):
+                                    score_a, score_b, rally = 0, 0, 0
+                                    paddle_y = {"A": FIELD_H/2, "B": FIELD_H/2}
+                                    new_serve(random.choice(["A", "B"]))
+                                    serve_start = time.monotonic()
+                                    phase = "serve"
+                            else:
+                                send_line(c, {"t": "error", "msg": f"cannot {t} in {phase}"})
+                        elif t == "pause":
+                            if phase in ("serve", "playing"):
+                                phase = "paused"
+                            else:
+                                send_line(c, {"t": "error", "msg": f"cannot {t} in {phase}"})
+                        elif t == "resume":
+                            if phase == "paused":
+                                phase = "serve"
+                                serve_start = time.monotonic()
+                            else:
+                                send_line(c, {"t": "error", "msg": f"cannot {t} in {phase}"})
+                        elif t == "rematch":
+                            if phase == "over":
+                                rematch[p] = True
+                                if all(rematch.values()):
+                                    score_a, score_b, rally = 0, 0, 0
+                                    ready = {"A": False, "B": False}
+                                    rematch = {"A": False, "B": False}
+                                    ball_x, ball_y = FIELD_W/2, FIELD_H/2
+                                    paddle_y = {"A": FIELD_H/2, "B": FIELD_H/2}
+                                    phase = "lobby"
+                                    broadcast({"t": "lobby", "ready": ready})
+                            else:
+                                send_line(c, {"t": "error", "msg": "game is still in progress!"})
                         else:
                             send_line(c, {"t": "error", "msg": f"unknown command {t}"})
 
@@ -284,6 +298,7 @@ try:
                 rally = 0
                 if score_a == WIN_SCORE:
                     phase = "over"
+                    ball_x, ball_y = FIELD_W/2, FIELD_H/2
                 else:
                     phase = "serve"
                     serve_start = time.monotonic()
