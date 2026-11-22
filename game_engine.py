@@ -21,6 +21,7 @@ PADDLE_SPEED = 300 * dt
 
 TARGETS = [("127.0.0.1", 9101), ("127.0.0.1", 9102)]
 ENGINE_IP = "127.0.0.1"
+PROTOCOL_VERSION = 1
 
 # Sending socket
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -36,8 +37,20 @@ sock_b = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock_b.bind((ENGINE_IP, 9002))
 sock_b.setblocking(False)
 
+# TCP Socket
+tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+tcp_sock.bind((ENGINE_IP, 8000))
+tcp_sock.listen()
+tcp_sock.setblocking(False)
+
+# Socket variables
+conns = []
+ready = {"A": False, "B": False}
+rematch = {"A": False, "B": False}
+
 # Game variables
-phase = "playing"
+phase = "lobby"
 ball_x, ball_y = FIELD_W/2, FIELD_H/2
 score_a, score_b = 0, 0
 rally = 0 # Rally length
@@ -53,18 +66,135 @@ def new_serve(toward):
     '''Moves ball to the center of the screen and serves in the given direction.
     On start, the direction is random.'''
     global ball_vx, ball_vy, ball_x, ball_y
-    ball_x, ball_y = FIELD_H/2, FIELD_W/2
+    ball_x, ball_y = FIELD_W/2, FIELD_H/2
     angle = math.radians(random.randint(-30,30))
     if toward == "A":
         ball_vx, ball_vy = BALL_SPEED * -math.cos(angle), BALL_SPEED * math.sin(angle)
     elif toward == "B":
         ball_vx, ball_vy = BALL_SPEED * math.cos(angle), BALL_SPEED * math.sin(angle)
 
-new_serve(random.choice(["A", "B"]))
+def drop(c):
+    '''Closes a HUD connection and removes it from conns.'''
+    try:
+        c["sock"].close()
+    except OSError:
+        pass    # already closed or broken
+    if c in conns:
+        conns.remove(c)
+    print("dropped", c["player"])
+
+def send_line(c, msg):
+    '''Turns msg into bytes and sends it to the HUD connection.'''
+    try:
+        data = (json.dumps(msg) + "\n").encode()
+        c["sock"].sendall(data)
+    except OSError:
+        pass
+
+def broadcast(msg):
+    '''Loops over conns and calls send_line() for every connection'''
+    for c in conns:
+        if c["player"] is not None:
+            send_line(c, msg)
+
+#new_serve(random.choice(["A", "B"]))
 next_tick = time.monotonic()
 
 try:
     while True:
+        while True:
+            try:
+                new_sock, addr = tcp_sock.accept()
+                new_sock.setblocking(False)
+                conns.append({"sock": new_sock, "buf": b"", "player": None})
+                print(addr)
+            except BlockingIOError:
+                break
+
+        for c in conns[:]:
+            try:
+                data = c["sock"].recv(4096)
+            except BlockingIOError:
+                continue
+            except OSError:
+                drop(c)
+                continue
+
+            if data == b"":
+                drop(c)
+                continue
+
+            else:
+                c["buf"] += data
+                while b"\n" in c["buf"]:
+                    line, c["buf"] = c["buf"].split(b"\n", 1)
+                    try:
+                        msg = json.loads(line)
+                    except ValueError:
+                        continue
+
+                    if not isinstance(msg, dict):
+                        continue
+
+                    if c["player"] is None:
+                        p = msg.get("p")
+                        
+                        if msg.get("t") != "hello":
+                            send_line(c, {"t": "error", "msg": "expected hello"})
+                            drop(c)
+                            break
+                        
+                        elif msg.get("v") != 1:
+                            send_line(c, {"t": "error", "msg": "unsupported protocol version"})
+                            drop(c)
+                            break
+
+                        elif p not in ("A", "B"):
+                            send_line(c, {"t": "error", "msg": "invalid player"})
+                            drop(c)
+                            break
+
+                        elif any(other["player"] == p for other in conns):
+                            send_line(c, {"t": "error", "msg": f"player {p} already connected."})
+                            drop(c)
+                            break
+
+                        else:
+                            c["player"] = p
+                            send_line(c, {"t": "welcome", "p": p})
+                            send_line(c, {"t": "lobby", "ready": ready})
+                            send_line(c, {"t": "board", "rows":[]})
+                            print(f"HUD {p} joined")
+                        
+                    else:
+                        t = msg.get("t")
+                        p = c["player"]
+                        if ready[p] == True:
+                            broadcast({"t": "lobby", "ready": ready})
+                            if all(ready.values()):
+                                score_a, score_b, rally = 0, 0, 0
+                                paddle_y = {"A": FIELD_H/2, "B": FIELD_H/2}
+                                new_serve(random.choice(["A", "B"]))
+                                serve_start = time.monotonic()
+                                phase = "serve"
+                        elif t == "pause" and phase in ("serve", "playing"):
+                            phase = "paused"
+                        elif phase == "paused" and t == "resume":
+                            phase = "serve"
+                            serve_start = time.monotonic()
+                        elif rematch[p] == True:
+                            if all(rematch.values()):
+                                score_a, score_b, rally = 0, 0, 0
+                                ready = {"A": False, "B": False}
+                                rematch = {"A": False, "B": False}
+                                ball_x, ball_y = FIELD_W/2, FIELD_H/2
+                                paddle_y = {"A": FIELD_H/2, "B": FIELD_H/2}
+                                phase = "lobby"
+                                broadcast({"t": "lobby", "ready": ready})
+                        else:
+                            send_line(c, {"t": "error", "msg": f"unknown command {t}"})
+
+
         for player, s in (("A", sock_a), ("B", sock_b)):
             while True:
                 try:
@@ -141,6 +271,7 @@ try:
                 rally = 0
                 if score_b == WIN_SCORE:
                     phase = "over"
+                    ball_x, ball_y = FIELD_W/2, FIELD_H/2
                 else:
                     phase = "serve"
                     serve_start = time.monotonic()
