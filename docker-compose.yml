@@ -1,0 +1,45 @@
+# Each Pi starts only its own services, picked with --profile:
+#   HMI Pi A:        docker compose --profile engine --profile hmi up -d --build
+#   HMI Pi B:        PLAYER=B docker compose --profile hmi up -d --build
+#   Sense HAT Pi A:  docker compose --profile sensehat up -d --build
+#   Sense HAT Pi B:  PLAYER=B docker compose --profile sensehat up -d --build
+# PLAYER comes from the shell environment (defaults to A), not from .env.
+
+services:
+  engine:
+    build: ./engine/
+    container_name: engine
+    profiles: ["engine"]
+    env_file: .env # DB_* settings
+    ports:
+      - "9001:9001/udp" # Player A joystick input
+      - "9002:9002/udp" # Player B joystick input
+      - "8000:8000" # TCP control (Ready / Pause / Rematch)
+      - "9300:9300" # TCP LED events to the Sense HAT Pis
+    restart: unless-stopped
+
+  hud:
+    build: ./hud/
+    container_name: hud
+    profiles: ["hmi"]
+    environment:
+      - PLAYER=${PLAYER:-A}
+      - DISPLAY=:0 # run `xhost +local:` in the Pi's desktop session first
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    ports:
+      - "9101:9101/udp" # game state from the engine
+    restart: unless-stopped
+
+  controller:
+    build: ./controller/
+    container_name: controller
+    profiles: ["sensehat"]
+    env_file: .env # ENGINE_IP
+    environment:
+      - PLAYER=${PLAYER:-A}
+    devices:
+      - /dev/input:/dev/input # Sense HAT joystick
+      - /dev/fb0:/dev/fb0 # LED matrix: check `cat /sys/class/graphics/fb*/name`, may be fb1
+      - /dev/i2c-1:/dev/i2c-1 # Sense HAT sensors
+    restart: unless-stopped # sends only, so no ports needed

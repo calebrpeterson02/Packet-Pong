@@ -1,5 +1,8 @@
-import json, socket, time
-import math, random
+import json
+import math
+import random
+import socket
+import time
 
 FIELD_W = 1600
 FIELD_H = 480
@@ -7,7 +10,7 @@ PADDLE_H = 80
 PADDLE_W = 10
 BALL_SIZE = 10
 
-PADDLE_X = 20 # Paddle offset from side of screen
+PADDLE_X = 20  # Paddle offset from side of screen
 
 TICK_HZ = 30
 SERVE_DELAY_S = 1
@@ -15,8 +18,8 @@ TIMEOUT_S = 2
 
 WIN_SCORE = 5
 
-dt = 1/30
-BALL_SPEED = 150 * dt
+dt = 1 / 30
+BALL_SPEED = 300 * dt
 PADDLE_SPEED = 300 * dt
 
 TARGETS = [("127.0.0.1", 9101), ("127.0.0.1", 9102)]
@@ -53,7 +56,7 @@ rematch = {"A": False, "B": False}
 phase = "lobby"
 ball_x, ball_y = FIELD_W/2, FIELD_H/2
 score_a, score_b = 0, 0
-rally = 0 # Rally length
+rally = 0  # Rally length
 seq = 0
 
 # Player variables
@@ -63,8 +66,8 @@ last_input_time = {"A": None, "B": None}
 paddle_y = {"A": FIELD_H/2, "B": FIELD_H/2}
 
 def new_serve(toward):
-    '''Moves ball to the center of the screen and serves in the given direction.
-    On start, the direction is random.'''
+    """Moves ball to the center of the screen and serves in the given direction.
+    On start, the direction is random."""
     global ball_vx, ball_vy, ball_x, ball_y
     ball_x, ball_y = FIELD_W/2, FIELD_H/2
     angle = math.radians(random.randint(-30,30))
@@ -304,7 +307,7 @@ try:
 
         seq += 1
 
-        next_tick += 1/30
+        next_tick += 1 / 30
         timecheck = time.monotonic()
         if (next_tick - timecheck) > 0:
             time.sleep(next_tick - timecheck)
