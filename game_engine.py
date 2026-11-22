@@ -3,6 +3,9 @@ import math
 import random
 import socket
 import time
+from database import db
+import threading, queue
+from datetime import datetime
 
 FIELD_W = 1600
 FIELD_H = 480
@@ -65,12 +68,18 @@ ball_x, ball_y = FIELD_W/2, FIELD_H/2
 score_a, score_b = 0, 0
 rally = 0  # Rally length
 seq = 0
+longest_rally = 0
 
 # Player variables
 direction = {"A": 0, "B": 0}
 last_seq = {"A": -1, "B": -1}
 last_input_time = {"A": None, "B": None}
 paddle_y = {"A": FIELD_H/2, "B": FIELD_H/2}
+
+# Database variables
+jobs = queue.Queue()        # Main loop puts jobs in, worker takes them out
+results = queue.Queue()     # Worker puts board rows in and main loop takes them out
+board = []                  # Main loop's saved copy of the latest leaderboard
 
 def new_serve(toward):
     """Moves ball to the center of the screen and serves in the given direction.
@@ -115,15 +124,43 @@ def broadcast(msg):
             send_line(c, msg)
 
 def led(p, ev):
+    '''Sends event data to the player's LEDs'''
     for c in conns:
         if c["kind"] == "led" and c["player"] == p:
             send_line(c, {"t": "led", "ev": ev})
 
 def led_all(ev):
+    '''Calls led(p, ev) for both players'''
     for p in ("A", "B"):
         led(p, ev)
 
+def worker():
+    '''Handles database insertion'''
+    match_id = None
+    while True:
+        try:
+            job = jobs.get()
+            kind = job[0]
+            if kind == "start":
+                _, started_at = job
+                match_id = db.insert_match(started_at, "A", "B")
+            elif kind == "point":
+                _, scored_at, scorer, rally_len = job
+                if match_id is not None:
+                    db.insert_point(match_id, scored_at, scorer, rally_len)
+            elif kind == "end":
+                _, ended_at, final_a, final_b, winner, longest = job
+                if match_id is not None:
+                    db.end_match(match_id, ended_at, final_a, final_b, winner, longest)
+                results.put(db.get_board())
+            elif kind == "board":
+                results.put(db.get_board())
+        except Exception as e:
+                print("db worker error:", e)
+
 next_tick = time.monotonic()
+threading.Thread(target=worker, daemon=True).start()
+jobs.put(("board",))
 
 try:
     while True:
@@ -190,7 +227,7 @@ try:
                             send_line(c, {"t": "welcome", "p": p})
                             if c["kind"] == "hud":
                                 send_line(c, {"t": "lobby", "ready": ready})
-                                send_line(c, {"t": "board", "rows":[]})
+                                send_line(c, {"t": "board", "rows":board})
                             elif c["kind"] == "led":
                                 if phase == "paused":
                                     ev = "paused"
@@ -218,6 +255,9 @@ try:
                                     serve_start = time.monotonic()
                                     phase = "serve"
                                     led_all("clear")
+                                    longest_rally = 0
+                                    jobs.put(("start", datetime.now()))
+
                             else:
                                 send_line(c, {"t": "error", "msg": f"cannot {t} in {phase}"})
                         elif t == "pause":
@@ -324,6 +364,8 @@ try:
                 ball_y = FIELD_H - BALL_SIZE / 2
             if ball_x <= BALL_SIZE / 2:
                 score_b += 1
+                longest_rally = max(longest_rally, rally)
+                jobs.put(("point", datetime.now(), "B", rally))
                 rally = 0
                 led("B", "goal_for")
                 led("A", "goal_against")
@@ -332,12 +374,15 @@ try:
                     ball_x, ball_y = FIELD_W/2, FIELD_H/2
                     led("B", "win")
                     led("A", "lose")
+                    jobs.put(("end", datetime.now(), score_a, score_b, "B", longest_rally))
                 else:
                     phase = "serve"
                     serve_start = time.monotonic()
                     new_serve("A")
             if ball_x >= FIELD_W - BALL_SIZE / 2:
                 score_a += 1
+                longest_rally = max(longest_rally, rally)
+                jobs.put(("point", datetime.now(), "A", rally))
                 rally = 0
                 led("A", "goal_for")
                 led("B", "goal_against")
@@ -346,10 +391,18 @@ try:
                     ball_x, ball_y = FIELD_W/2, FIELD_H/2
                     led("A", "win")
                     led("B", "lose")
+                    jobs.put(("end", datetime.now(), score_a, score_b, "A", longest_rally))
                 else:
                     phase = "serve"
                     serve_start = time.monotonic()
                     new_serve("B")
+
+        try:
+            rows = results.get_nowait()
+            board = rows
+            broadcast({"t": "board", "rows": board})
+        except queue.Empty:
+            pass
 
         state = {
             "t": "state",
