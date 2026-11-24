@@ -30,7 +30,8 @@ services:
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
     ports:
-      - "9101:9101/udp" # game state from the engine
+      - "9101:9101/udp" # game state from the engine (Player A's HUD)
+      - "9102:9102/udp" # game state from the engine (Player B's HUD)
     restart: unless-stopped
 
   controller:

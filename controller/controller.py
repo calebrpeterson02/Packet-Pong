@@ -23,6 +23,49 @@ direction = 0
 seq = 0
 next_tick = time.monotonic()
 
+# TCP connection the engine uses to send LED events
+LED_PORT = 9300
+RECONNECT_S = 2
+FLASH_S = 0.5
+led_sock = None
+led_buf = b""
+last_connect_try = 0
+flash_until = None
+
+
+def connect_led():
+    """Opens the LED event connection to the engine and sends hello."""
+    global led_sock, led_buf
+    try:
+        s = socket.create_connection((ENGINE_IP, LED_PORT), timeout=0.5)
+        s.sendall((json.dumps({"t": "hello", "p": PLAYER, "v": 1}) + "\n").encode())
+        s.setblocking(False)
+        led_sock, led_buf = s, b""
+        print("[+] Connected to engine LED events")
+    except OSError:
+        led_sock = None
+
+
+def show(ev):
+    """Shows one LED event on the Sense HAT matrix."""
+    global flash_until
+    flash_until = None
+    if ev == "goal_for":
+        sense.clear((0, 255, 0))
+        flash_until = time.monotonic() + FLASH_S
+    elif ev == "goal_against":
+        sense.clear((255, 0, 0))
+        flash_until = time.monotonic() + FLASH_S
+    elif ev == "win":
+        sense.show_letter("W", text_colour=(0, 255, 0))
+    elif ev == "lose":
+        sense.show_letter("L", text_colour=(255, 0, 0))
+    elif ev == "paused":
+        sense.show_letter("P", text_colour=(255, 255, 0))
+    elif ev == "clear":
+        sense.clear()
+
+
 while True:
     # 1. Turn joystick events into the current direction
     for event in sense.stick.get_events():
@@ -45,7 +88,39 @@ while True:
         pass  # network not up yet (e.g. at boot) — just try again next tick
     seq += 1
 
-    # 3. Sleep until the next 33 ms tick
+    # 3. Read LED events from the engine (reconnect every 2 s if the link is down)
+    if led_sock is None and time.monotonic() - last_connect_try >= RECONNECT_S:
+        last_connect_try = time.monotonic()
+        connect_led()
+
+    if led_sock is not None:
+        try:
+            data = led_sock.recv(1024)
+        except BlockingIOError:
+            data = None  # nothing new this tick
+        except OSError:
+            data = b""
+
+        if data == b"":
+            print("[ERROR] Engine closed the LED connection")
+            led_sock.close()
+            led_sock = None
+        elif data:
+            led_buf += data
+            while b"\n" in led_buf:
+                line, led_buf = led_buf.split(b"\n", 1)
+                try:
+                    msg = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(msg, dict) and msg.get("t") == "led":
+                    show(msg.get("ev"))
+
+    if flash_until is not None and time.monotonic() >= flash_until:
+        sense.clear()  # end of a goal flash
+        flash_until = None
+
+    # 4. Sleep until the next 33 ms tick
     next_tick += TICK
     delay = next_tick - time.monotonic()
     if delay > 0:

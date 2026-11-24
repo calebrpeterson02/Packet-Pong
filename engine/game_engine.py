@@ -27,7 +27,7 @@ dt = 1 / 30
 BALL_SPEED = 300 * dt
 PADDLE_SPEED = 300 * dt
 
-TARGETS = [("192.168.4.42", 9101), ("192.168.5.52", 9102)]
+TARGETS = [("192.168.5.52", 9101), ("192.168.5.42", 9102)]  # HUD A (HMI Pi A), HUD B (HMI Pi B)
 ENGINE_IP = "0.0.0.0"
 PROTOCOL_VERSION = 1
 
@@ -145,6 +145,11 @@ def led_all(ev):
     """Calls led(p, ev) for both players"""
     for p in ("A", "B"):
         led(p, ev)
+
+
+def hud_connected(p):
+    """True if player p's HUD has a TCP connection open"""
+    return any(c["player"] == p and c["kind"] == "hud" for c in conns)
 
 
 def worker():
@@ -297,14 +302,18 @@ try:
                                     c, {"t": "error", "msg": f"cannot {t} in {phase}"}
                                 )
                         elif t == "resume":
-                            if phase == "paused":
-                                phase = "serve"
-                                led_all("clear")
-                                serve_start = time.monotonic()
-                            else:
+                            if phase != "paused":
                                 send_line(
                                     c, {"t": "error", "msg": f"cannot {t} in {phase}"}
                                 )
+                            elif not (hud_connected("A") and hud_connected("B")):
+                                send_line(
+                                    c, {"t": "error", "msg": "waiting for other player"}
+                                )
+                            else:
+                                phase = "serve"
+                                led_all("clear")
+                                serve_start = time.monotonic()
                         elif t == "rematch":
                             if phase == "over":
                                 rematch[p] = True
@@ -342,7 +351,10 @@ try:
                 if msg.get("p") != player:
                     continue  # not correct player
 
-                in_seq = msg.get("seq", -1)
+                in_seq = msg.get("seq")
+                if not isinstance(in_seq, int):
+                    continue  # missing or non-number seq
+
                 if in_seq <= last_seq[player] and last_seq[player] - in_seq <= 1000:
                     continue  # old or duplicate packet (a drop > 1000 means the controller restarted)
 

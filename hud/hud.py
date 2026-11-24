@@ -40,6 +40,50 @@ last_state_time = None
 
 font = pygame.font.Font(None, 36)
 
+# TCP control connection to the engine (lobby / pause / rematch)
+ENGINE_IP = os.environ.get("ENGINE_IP", "192.168.5.52")
+RECONNECT_S = 2
+tcp_sock = None
+tcp_buf = b""
+last_connect_try = 0
+ready = {"A": False, "B": False}
+board = []
+
+# The one on-screen button sends the command that fits the current phase
+COMMANDS = {
+    "lobby": "ready",
+    "serve": "pause",
+    "playing": "pause",
+    "paused": "resume",
+    "over": "rematch",
+}
+button = pygame.Rect(340, 10, 120, 40)
+
+
+def connect():
+    """Opens the TCP connection to the engine and sends hello."""
+    global tcp_sock, tcp_buf
+    try:
+        s = socket.create_connection((ENGINE_IP, 8000), timeout=0.5)
+        s.sendall((json.dumps({"t": "hello", "p": player, "v": 1}) + "\n").encode())
+        s.setblocking(False)
+        tcp_sock, tcp_buf = s, b""
+        print("[+] Connected to engine")
+    except OSError:
+        tcp_sock = None
+
+
+def send(msg):
+    """Sends one command line to the engine."""
+    global tcp_sock
+    if tcp_sock is None:
+        return
+    try:
+        tcp_sock.sendall((json.dumps(msg) + "\n").encode())
+    except OSError:
+        tcp_sock.close()
+        tcp_sock = None
+
 
 ### Put code you want to run once before the game starts above this!
 
@@ -52,7 +96,49 @@ while should_run:
             if event.key == pygame.K_ESCAPE:
                 should_run = False
 
+        # Tap the button (or press Space) to send this phase's command
+        pressed = (
+            event.type == pygame.MOUSEBUTTONDOWN and button.collidepoint(event.pos)
+        ) or (event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE)
+        if pressed and latest_state is not None:
+            command = COMMANDS.get(latest_state["phase"])
+            if command:
+                send({"t": command})
+
     ### Put code you want to run every frame below this!
+    if tcp_sock is None and time.monotonic() - last_connect_try >= RECONNECT_S:
+        last_connect_try = time.monotonic()
+        connect()
+
+    if tcp_sock is not None:
+        try:
+            data = tcp_sock.recv(4096)
+        except BlockingIOError:
+            data = None  # nothing new this frame
+        except OSError:
+            data = b""
+
+        if data == b"":
+            print("[ERROR] Engine closed the connection")
+            tcp_sock.close()
+            tcp_sock = None  # retry in RECONNECT_S
+        elif data:
+            tcp_buf += data
+            while b"\n" in tcp_buf:
+                line, tcp_buf = tcp_buf.split(b"\n", 1)
+                try:
+                    msg = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(msg, dict):
+                    continue
+                if msg.get("t") == "lobby":
+                    ready = msg["ready"]
+                elif msg.get("t") == "board":
+                    board = msg["rows"]
+                elif msg.get("t") == "error":
+                    print("[ERROR]", msg.get("msg"))
+
     while True:
         try:
             data, addr = udp_sock.recvfrom(2048)  # buffer size is 2048 bytes
@@ -103,6 +189,39 @@ while should_run:
         player_b_score = font.render(str(latest_state["sb"]), True, "white")
         window.blit(player_a_score, (200, 20))
         window.blit(player_b_score, (600, 20))
+
+        # Phase message
+        phase = latest_state["phase"]
+        if phase == "lobby":
+            status = f"A: {'ready' if ready['A'] else 'not ready'}    B: {'ready' if ready['B'] else 'not ready'}"
+        elif phase == "paused":
+            status = "PAUSED"
+        elif phase == "over":
+            status = ("A" if latest_state["sa"] > latest_state["sb"] else "B") + " wins!"
+        else:
+            status = ""
+        text = font.render(status, True, "white")
+        window.blit(text, text.get_rect(centerx=window.get_width() / 2, y=140))
+
+        # Leaderboard between matches
+        if phase in ("lobby", "over"):
+            title = font.render("Longest rallies", True, "white")
+            window.blit(title, title.get_rect(centerx=window.get_width() / 2, y=200))
+            for i, row in enumerate(board[:5]):
+                line = font.render(
+                    f"{row['rally']} hits  (match {row['match_id']})", True, "white"
+                )
+                window.blit(
+                    line, line.get_rect(centerx=window.get_width() / 2, y=240 + i * 32)
+                )
+
+        # Command button, or a notice while the TCP link is down
+        if tcp_sock is None:
+            label = font.render("Connecting...", True, "gray")
+        else:
+            pygame.draw.rect(window, "white", button, 2)
+            label = font.render(COMMANDS.get(phase, "").capitalize(), True, "white")
+        window.blit(label, label.get_rect(center=button.center))
 
     ### Put code you want to run every frame above this!
 
