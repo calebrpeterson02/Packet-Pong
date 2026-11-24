@@ -9,8 +9,8 @@ from datetime import datetime
 
 from database import db
 
-FIELD_W = 1600
-FIELD_H = 480
+FIELD_W = 2048
+FIELD_H = 600
 PADDLE_H = 80
 PADDLE_W = 10
 BALL_SIZE = 10
@@ -24,8 +24,10 @@ TIMEOUT_S = 2
 WIN_SCORE = 5
 
 dt = 1 / 30
-BALL_SPEED = 300 * dt
-PADDLE_SPEED = 300 * dt
+BALL_SPEED = 700 * dt
+PADDLE_SPEED = 400 * dt
+SPEEDUP = 1.05
+MAX_SPEED = 1500 * dt
 
 TARGETS = [("192.168.5.52", 9101), ("192.168.5.42", 9102)]  # HUD A (HMI Pi A), HUD B (HMI Pi B)
 ENGINE_IP = "0.0.0.0"
@@ -403,6 +405,9 @@ try:
             ):
                 ball_vx = -ball_vx
                 ball_x = BALL_SIZE / 2 + (PADDLE_X + PADDLE_W / 2)
+                if abs(ball_vx) < MAX_SPEED:
+                    ball_vx *= SPEEDUP
+                    ball_vy *= SPEEDUP
                 rally += 1
             if (
                 ball_x + BALL_SIZE / 2 >= (FIELD_W - PADDLE_X - PADDLE_W / 2)
@@ -411,6 +416,9 @@ try:
             ):
                 ball_vx = -ball_vx
                 ball_x = FIELD_W - PADDLE_X - PADDLE_W / 2 - BALL_SIZE / 2
+                if abs(ball_vx) < MAX_SPEED:
+                    ball_vx *= SPEEDUP
+                    ball_vy *= SPEEDUP
                 rally += 1
             if ball_y <= BALL_SIZE / 2:
                 ball_vy = abs(ball_vy)
