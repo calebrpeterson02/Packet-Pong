@@ -1,0 +1,7 @@
+# Keep the engine's repo-root build context small, and keep credentials out of it
+.git
+.env
+.venv
+venv
+**/__pycache__
+**/*.py[cod]

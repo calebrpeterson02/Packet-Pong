@@ -7,7 +7,9 @@
 
 services:
   engine:
-    build: ./engine/
+    build:
+      context: . # repo root, so the image can include database/db.py
+      dockerfile: engine/Dockerfile
     container_name: engine
     profiles: ["engine"]
     env_file: .env # DB_* settings

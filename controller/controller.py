@@ -30,9 +30,9 @@ while True:
             continue  # left/right/middle unused in pong
         if event.action in ("pressed", "held"):
             if event.direction == "up":
-                direction = 1
-            else:
                 direction = -1
+            else:
+                direction = 1
         elif event.action == "released":
             direction = 0
 
