@@ -2,6 +2,7 @@ import json
 import os
 import socket
 import time
+import signal
 
 from dotenv import load_dotenv
 from sense_hat import SenseHat
@@ -66,64 +67,78 @@ def show(ev):
         sense.clear()
 
 
-while True:
-    # 1. Turn joystick events into the current direction
-    for event in sense.stick.get_events():
-        if event.direction not in ("up", "down"):
-            continue  # left/right/middle unused in pong
-        if event.action in ("pressed", "held"):
-            if event.direction == "up":
-                direction = -1
-            else:
-                direction = 1
-        elif event.action == "released":
-            direction = 0
+def on_sigterm(signum, frame):
+    """Turns Docker's stop signal into a normal exit so the finally block runs."""
+    raise SystemExit
 
-    # 2. Build and send the input message (every tick, even if dir == 0)
-    msg = {"t": "input", "p": PLAYER, "seq": seq, "dir": direction}
-    data = json.dumps(msg, separators=(",", ":")).encode("utf-8")
-    try:
-        sock.sendto(data, (ENGINE_IP, ENGINE_PORT))
-    except OSError:
-        pass  # network not up yet (e.g. at boot) — just try again next tick
-    seq += 1
 
-    # 3. Read LED events from the engine (reconnect every 2 s if the link is down)
-    if led_sock is None and time.monotonic() - last_connect_try >= RECONNECT_S:
-        last_connect_try = time.monotonic()
-        connect_led()
+signal.signal(signal.SIGTERM, on_sigterm)
 
-    if led_sock is not None:
+try:
+    while True:
+        # 1. Turn joystick events into the current direction
+        for event in sense.stick.get_events():
+            if event.direction not in ("up", "down"):
+                continue  # left/right/middle unused in pong
+            if event.action in ("pressed", "held"):
+                if event.direction == "up":
+                    direction = -1
+                else:
+                    direction = 1
+            elif event.action == "released":
+                direction = 0
+
+        # 2. Build and send the input message (every tick, even if dir == 0)
+        msg = {"t": "input", "p": PLAYER, "seq": seq, "dir": direction}
+        data = json.dumps(msg, separators=(",", ":")).encode("utf-8")
         try:
-            data = led_sock.recv(1024)
-        except BlockingIOError:
-            data = None  # nothing new this tick
+            sock.sendto(data, (ENGINE_IP, ENGINE_PORT))
         except OSError:
-            data = b""
+            pass  # network not up yet (e.g. at boot) — just try again next tick
+        seq += 1
 
-        if data == b"":
-            print("[ERROR] Engine closed the LED connection")
-            led_sock.close()
-            led_sock = None
-        elif data:
-            led_buf += data
-            while b"\n" in led_buf:
-                line, led_buf = led_buf.split(b"\n", 1)
-                try:
-                    msg = json.loads(line)
-                except ValueError:
-                    continue
-                if isinstance(msg, dict) and msg.get("t") == "led":
-                    show(msg.get("ev"))
+        # 3. Read LED events from the engine (reconnect every 2 s if the link is down)
+        if led_sock is None and time.monotonic() - last_connect_try >= RECONNECT_S:
+            last_connect_try = time.monotonic()
+            connect_led()
 
-    if flash_until is not None and time.monotonic() >= flash_until:
-        sense.clear()  # end of a goal flash
-        flash_until = None
+        if led_sock is not None:
+            try:
+                data = led_sock.recv(1024)
+            except BlockingIOError:
+                data = None  # nothing new this tick
+            except OSError:
+                data = b""
 
-    # 4. Sleep until the next 33 ms tick
-    next_tick += TICK
-    delay = next_tick - time.monotonic()
-    if delay > 0:
-        time.sleep(delay)
-    else:
-        next_tick = time.monotonic()  # fell behind; resync instead of bursting
+            if data == b"":
+                print("[ERROR] Engine closed the LED connection")
+                sense.clear()
+                flash_until = None
+                led_sock.close()
+                led_sock = None
+            elif data:
+                led_buf += data
+                while b"\n" in led_buf:
+                    line, led_buf = led_buf.split(b"\n", 1)
+                    try:
+                        msg = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(msg, dict) and msg.get("t") == "led":
+                        show(msg.get("ev"))
+
+        if flash_until is not None and time.monotonic() >= flash_until:
+            sense.clear()  # end of a goal flash
+            flash_until = None
+
+        # 4. Sleep until the next 33 ms tick
+        next_tick += TICK
+        delay = next_tick - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
+        else:
+            next_tick = time.monotonic()  # fell behind; resync instead of bursting
+finally:
+    sense.clear()
+    if led_sock is not None:
+        led_sock.close()

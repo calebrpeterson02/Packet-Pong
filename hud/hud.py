@@ -10,11 +10,11 @@ from dotenv import load_dotenv
 load_dotenv()  # read the repo's .env; values already set (e.g. by docker env_file) win
 
 pygame.init()
-window = pygame.display.set_mode((800, 480), pygame.FULLSCREEN)
+window = pygame.display.set_mode((1024, 600), pygame.FULLSCREEN)
 pygame.display.set_caption("Packet Pong")
 
 clock = pygame.time.Clock()
-FIELD_W = 1600
+FIELD_W = 2048
 
 ### Put code you want to run once before the game starts below this!
 player = os.environ.get("PLAYER", "A").upper()
