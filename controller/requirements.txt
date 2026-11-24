@@ -1,3 +1,4 @@
 sense-hat==2.6.0
-RTIMULib==7.2.1
+# The PyPI RTIMULib 7.2.1 package is missing its C++ sources, so build it from the Raspberry Pi repo
+RTIMULib @ git+https://github.com/RPi-Distro/RTIMULib.git@6a6e784b744bfa2d56788fc1f13d0dd62260bea7#subdirectory=Linux/python
 python-dotenv==1.0.1

@@ -4,10 +4,10 @@ FROM python:3.11-slim-bookworm
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
-# sense-hat depends on RTIMULib, which compiles from source, so it needs a C++ toolchain
+# sense-hat depends on RTIMULib, which compiles from source (git clone + C++ toolchain)
 COPY requirements.txt .
 RUN apt-get update \
- && apt-get install -y --no-install-recommends build-essential \
+ && apt-get install -y --no-install-recommends build-essential git \
  && pip install --no-cache-dir -r requirements.txt \
  && rm -rf /var/lib/apt/lists/*
 
